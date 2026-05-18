@@ -1,0 +1,134 @@
+Тема 8. Работа над ошибками.
+
+В процессе разработки и тестирования приложения, в том числе совместно с проектом по дисциплине «Разработка автоматизированных систем» мы выявили несколько ошибок, исправлением которых сейчас и займемся.
+
+В файле AuthController.cs добавим отображение роли пользователя, после прохождения им авторизации.
+
+[Рисунок 1 -- Файл AuthController.cs]
+[HttpPost("login")]
+public async Task<IActionResult> Login([FromBody] LoginRequestDto request)
+{
+    var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+    if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
+        return Unauthorized("Неверный email или пароль");
+
+    var token = GenerateJwtToken(user);
+    
+    // Добавляем отображение роли пользователя в ответе
+    return Ok(new 
+    { 
+        token = token,
+        role = user.Role,      // добавлено
+        email = user.Email,    // добавлено
+        fullName = user.FullName  // добавлено
+    });
+}
+
+Основной ошибкой являются разные домены в этих приложениях (7045 и 3000). В файле Program.cs добавим константу ClientAppCors и метод AddCors. AddCors -- добавляет службы общего доступа к ресурсам независимо от источника в указанный объект. Укажем нужный домен и также, с помощью AllowAnyMethod, сделаем возможными любые запросы через этот домен. AllowAnyHeader(): принимаются запросы с любыми заголовками.
+
+[Рисунок 2 -- Указание нужного домена]
+var MyAllowSpecificOrigins = "_myAllowSpecificOrigins";
+var ClientAppCors = "http://localhost:3000"; // домен клиентского приложения
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(name: MyAllowSpecificOrigins,
+        policy =>
+        {
+            policy.WithOrigins(ClientAppCors)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .AllowCredentials();
+        });
+});
+
+// Также можно добавить несколько доменов:
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowMultipleOrigins",
+        builder =>
+        {
+            builder.WithOrigins("http://localhost:3000", "http://localhost:7045")
+                   .AllowAnyMethod()
+                   .AllowAnyHeader();
+        });
+});
+
+Чтобы все cors, которые мы настроили работали, пропишем UseCors.
+
+[Рисунок 3 -- UseCors]
+var app = builder.Build();
+
+// ... другие middleware ...
+
+app.UseCors(MyAllowSpecificOrigins); // добавлено
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+
+Перейдем в файл AdministrationController.cs и исправим определение метода getusers. Данный метод был методом Patch, что неверно, так как данный метод возвращает список пользователей.
+
+[Рисунок 4 -- Исправление метода]
+Было (неверно):
+[HttpPatch("getusers")]
+public async Task<IActionResult> GetUsers()
+
+Стало (верно):
+[HttpGet("getusers")]
+public async Task<IActionResult> GetUsers()
+{
+    var users = await _context.Users
+        .Select(u => new
+        {
+            u.Id,
+            u.Email,
+            u.FullName,
+            u.Role
+        })
+        .ToListAsync();
+    return Ok(users);
+}
+
+Мы будем получать данные не из строки URL, а из тела запроса (FromBody). Данные изменения вносим в файл DepartmentsController.cs.
+
+[Рисунок 5 -- Файл DepartmentsController.cs]
+Было (получение из URL):
+[HttpPut("{id}")]
+public async Task<IActionResult> UpdateDepartment(int id, string name, string description)
+
+Стало (получение из тела запроса):
+[HttpPut("{id}")]
+public async Task<IActionResult> UpdateDepartment(int id, [FromBody] UpdateDepartmentRequestDto request)
+
+[HttpPost]
+public async Task<IActionResult> CreateDepartment([FromBody] AddDepartmentRequestDto request)
+
+Создаем файл AddDepartmentRequestDto.cs в котором описываем соответствующий класс для данных, необходимых для добавления отдела.
+
+[Рисунок 6 -- Файл AddDepartmentRequestDto.cs]
+namespace YourProject.Models.DTO
+{
+    public class AddDepartmentRequestDto
+    {
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string Location { get; set; } // возможно, дополнительное поле
+    }
+}
+
+Создаем файл UpdateDepartmentRequestDto.cs, в котором описываем соответствующий класс для данных, необходимых для обновления информации об отделах.
+
+[Рисунок 7 -- Файл UpdateDepartmentRequestDto.cs]
+namespace YourProject.Models.DTO
+{
+    public class UpdateDepartmentRequestDto
+    {
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string Location { get; set; } // возможно, дополнительное поле
+    }
+}

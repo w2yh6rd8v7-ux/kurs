@@ -1,0 +1,358 @@
+Тема №5. EmployeesController.
+
+В папке Models создадим папку DTO, внутри которой создадим файл класса EmployeeDto.cs. Этот файл необходим для получения id отдела, в котором находится сотрудник.
+
+[Рисунок 1 -- Файл EmployeeDto.cs]
+Содержимое файла EmployeeDto.cs (первоначальная версия):
+namespace YourProject.Models.DTO
+{
+    public class EmployeeDto
+    {
+        public int DepartmentId { get; set; }
+    }
+}
+
+Для корректного взаимодействия всех данных, в файлах WorkExperience.cs и Education.cs уберем связь с Employee, так как она будет мешать передаче данных.
+
+[Рисунок 2 -- Убираем связь с Employee в WorkExperience.cs и Education.cs]
+Было (пример):
+public int EmployeeId { get; set; }
+public Employee Employee { get; set; }
+
+Стало:
+public int EmployeeId { get; set; }
+// public Employee Employee { get; set; } - удалено или закомментировано
+
+Так как мы меняли сущность проекта, создадим новую миграцию для обновления структуры. После этого обновляем базу данных.
+
+[Рисунок 3 -- Создание миграции и обновление базы данных]
+Команды в консоли диспетчера пакетов (NuGet Package Manager Console):
+Add-Migration UpdateEmployeeRelations
+Update-Database
+
+В папке Controllers создадим новый контроллер EmployeesController.cs.
+
+[Рисунок 4 -- Добавление контроллера]
+Создан файл EmployeesController.cs с базовым шаблоном контроллера API.
+
+Реализуем следующие методы: вывод списка сотрудников (GetEmployees), создание сотрудника (CreateEmployee), редактирование сотрудника (UpdateEmployee), удаление сотрудника (DeleteEmployee), добавление сотруднику данных об образовании (AddEducation) и рабочем опыте (AddWorkExperience) и удаление их (DeleteEducation и DeleteWorkExperience). Так как для вывода данных об опыте работы нам понадобятся данные из разных сущностей (id от Employee и WorkExperience от WorkExperience), то создадим дополнительный файл класса WorkExperienceRequestDto.cs в папке DTO.
+
+[Рисунок 5 -- Создание файла WorkExperienceRequestDto.cs]
+Содержимое WorkExperienceRequestDto.cs:
+namespace YourProject.Models.DTO
+{
+    public class WorkExperienceRequestDto
+    {
+        public int EmployeeId { get; set; }
+        public string Company { get; set; }
+        public string Position { get; set; }
+        public DateTime StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+    }
+}
+
+По той же причине в папке DTO создаем файл класса EducationRequestDto.cs.
+
+[Рисунок 6 -- Создание файла EducationRequestDto.cs]
+Содержимое EducationRequestDto.cs:
+namespace YourProject.Models.DTO
+{
+    public class EducationRequestDto
+    {
+        public int EmployeeId { get; set; }
+        public string Institution { get; set; }
+        public string Degree { get; set; }
+        public int YearOfGraduation { get; set; }
+    }
+}
+
+Подключаем необходимые атрибуты контроллера и описываем метод вывода списка сотрудников по примеру выбора списка отделов. Указываем, что помимо ФИО, почты, даты рождения и номера телефона нам необходимо получать информацию об опыте работы и образовании.
+
+[Рисунок 7 -- Файл EmployeesController.cs (фрагмент метода GetEmployees)]
+[ApiController]
+[Route("api/[controller]")]
+public class EmployeesController : ControllerBase
+{
+    private readonly ApplicationDbContext _context;
+    public EmployeesController(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetEmployees()
+    {
+        var employees = await _context.Employees
+            .Include(e => e.WorkExperiences)
+            .Include(e => e.Educations)
+            .Select(e => new
+            {
+                e.Id,
+                e.FullName,
+                e.Email,
+                e.BirthDate,
+                e.PhoneNumber,
+                WorkExperiences = e.WorkExperiences.ToList(),
+                Educations = e.Educations.ToList()
+            })
+            .ToListAsync();
+        return Ok(employees);
+    }
+}
+
+Суть метода CreateEmployee заключается в том, что сначала мы ищем отдел. В случае, если введенному id соответствует какой-либо отдел, мы создаем в нем сотрудника. В методе UpdateEmployee прописываем все необходимые поля данных, содержимое которых будет считываться и обновляться.
+
+[Рисунок 8 -- Методы CreateEmployee и UpdateEmployee]
+// Первоначальная версия CreateEmployee
+[HttpPost]
+public async Task<IActionResult> CreateEmployee([FromBody] EmployeeDto dto)
+{
+    var department = await _context.Departments.FindAsync(dto.DepartmentId);
+    if (department == null)
+        return NotFound("Отдел не найден");
+
+    var employee = new Employee
+    {
+        DepartmentId = dto.DepartmentId,
+        // другие поля
+    };
+    _context.Employees.Add(employee);
+    await _context.SaveChangesAsync();
+    return Ok(employee);
+}
+
+// UpdateEmployee
+[HttpPut("{id}")]
+public async Task<IActionResult> UpdateEmployee(int id, [FromBody] EmployeeUpdateDto dto)
+{
+    var employee = await _context.Employees.FindAsync(id);
+    if (employee == null)
+        return NotFound();
+    employee.FullName = dto.FullName;
+    employee.Email = dto.Email;
+    employee.BirthDate = dto.BirthDate;
+    employee.PhoneNumber = dto.PhoneNumber;
+    await _context.SaveChangesAsync();
+    return Ok(employee);
+}
+
+В методе DeleteEmployee мы будем искать сотрудника с введенным id и в случае успешного обнаружения, удалять его. В методе AddWorkExperience, находим сотрудника по id и получаем его данные с помощью ранее созданного класса dto. Переменная weId отвечает за получение идентификатора вновь созданной записи.
+
+[Рисунок 9 -- Методы DeleteEmployee и AddWorkExperience]
+[HttpDelete("{id}")]
+public async Task<IActionResult> DeleteEmployee(int id)
+{
+    var employee = await _context.Employees.FindAsync(id);
+    if (employee == null)
+        return NotFound();
+    _context.Employees.Remove(employee);
+    await _context.SaveChangesAsync();
+    return Ok();
+}
+
+[HttpPost("AddWorkExperience")]
+public async Task<IActionResult> AddWorkExperience([FromBody] WorkExperienceRequestDto dto)
+{
+    var employee = await _context.Employees.FindAsync(dto.EmployeeId);
+    if (employee == null)
+        return NotFound("Сотрудник не найден");
+    var workExp = new WorkExperience
+    {
+        EmployeeId = dto.EmployeeId,
+        Company = dto.Company,
+        Position = dto.Position,
+        StartDate = dto.StartDate,
+        EndDate = dto.EndDate
+    };
+    _context.WorkExperiences.Add(workExp);
+    await _context.SaveChangesAsync();
+    int weId = workExp.Id; // переменная weId отвечает за получение идентификатора
+    return Ok(workExp);
+}
+
+DeleteWorkExperience пропишем по аналогии с DeleteEmployee. Методы AddEducation и DeleteEducation создаем на основе аналогичных для опыта работы.
+
+[Рисунок 10 -- Метод DeleteWorkExperience]
+[HttpDelete("DeleteWorkExperience/{id}")]
+public async Task<IActionResult> DeleteWorkExperience(int id)
+{
+    var workExp = await _context.WorkExperiences.FindAsync(id);
+    if (workExp == null)
+        return NotFound();
+    _context.WorkExperiences.Remove(workExp);
+    await _context.SaveChangesAsync();
+    return Ok();
+}
+
+[Рисунок 11 -- Методы AddEducation и DeleteEducation]
+[HttpPost("AddEducation")]
+public async Task<IActionResult> AddEducation([FromBody] EducationRequestDto dto)
+{
+    var employee = await _context.Employees.FindAsync(dto.EmployeeId);
+    if (employee == null)
+        return NotFound();
+    var education = new Education
+    {
+        EmployeeId = dto.EmployeeId,
+        Institution = dto.Institution,
+        Degree = dto.Degree,
+        YearOfGraduation = dto.YearOfGraduation
+    };
+    _context.Educations.Add(education);
+    await _context.SaveChangesAsync();
+    return Ok(education);
+}
+
+[HttpDelete("DeleteEducation/{id}")]
+public async Task<IActionResult> DeleteEducation(int id)
+{
+    var education = await _context.Educations.FindAsync(id);
+    if (education == null)
+        return NotFound();
+    _context.Educations.Remove(education);
+    await _context.SaveChangesAsync();
+    return Ok();
+}
+
+В ходе тестирования было установлено, что при добавлении сотрудника, список отделов не собирает эти данные. Исправим принцип работы метода GetDepartments в файле DepartmentsController.cs.
+
+[Рисунок 12 -- Файл DepartmentsController.cs (исправленный метод GetDepartments)]
+[HttpGet]
+public async Task<IActionResult> GetDepartments()
+{
+    var departments = await _context.Departments
+        .Include(d => d.Employees)
+        .Select(d => new
+        {
+            d.Id,
+            d.Name,
+            EmployeesCount = d.Employees.Count
+        })
+        .ToListAsync();
+    return Ok(departments);
+}
+
+Переименнуем файл EmployeeDto.cs в EmployeeRequestDto.cs и добавим в него поля личной информации о сотруднике.
+
+[Рисунок 13 -- Файл EmployeeRequestDto.cs]
+namespace YourProject.Models.DTO
+{
+    public class EmployeeRequestDto
+    {
+        public int DepartmentId { get; set; }
+        public string FullName { get; set; }
+        public string Email { get; set; }
+        public DateTime BirthDate { get; set; }
+        public string PhoneNumber { get; set; }
+    }
+}
+
+Вернемся в файл EmployeesController.cs и изменим структуру метода CreateEmployee.
+
+[Рисунок 14 -- Изменение кода метода CreateEmployee]
+[HttpPost]
+public async Task<IActionResult> CreateEmployee([FromBody] EmployeeRequestDto dto)
+{
+    var department = await _context.Departments.FindAsync(dto.DepartmentId);
+    if (department == null)
+        return NotFound("Отдел не найден");
+
+    var employee = new Employee
+    {
+        DepartmentId = dto.DepartmentId,
+        FullName = dto.FullName,
+        Email = dto.Email,
+        BirthDate = dto.BirthDate,
+        PhoneNumber = dto.PhoneNumber
+    };
+    _context.Employees.Add(employee);
+    await _context.SaveChangesAsync();
+    return Ok(employee);
+}
+
+Перейдем к тестированию приложения. Создадим сотрудника.
+
+[Рисунок 15 -- Создание сотрудника]
+Отправлен POST-запрос на /api/employees с JSON-телом:
+{
+    "departmentId": 1,
+    "fullName": "Иванов Иван Иванович",
+    "email": "ivanov@example.com",
+    "birthDate": "1990-01-01",
+    "phoneNumber": "+71234567890"
+}
+
+Сотрудник успешно создан.
+
+[Рисунок 16 -- Сотрудник создан]
+Получен ответ от сервера со статусом 200 OK и данными созданного сотрудника, включая присвоенный Id.
+
+Приведем методы к единому виду. Для этого в папке DTO создадим файл класса LoginRequestDto.cs.
+
+[Рисунок 17 -- Файл LoginRequestDto.cs]
+namespace YourProject.Models.DTO
+{
+    public class LoginRequestDto
+    {
+        public string Email { get; set; }
+        public string Password { get; set; }
+    }
+}
+
+Переходим в файл AuthController.cs и меняем код метода Login.
+
+[Рисунок 18 -- Метод Login в файле AuthController.cs]
+[HttpPost("login")]
+public async Task<IActionResult> Login([FromBody] LoginRequestDto request)
+{
+    var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+    if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
+        return Unauthorized();
+    // генерация токена...
+    return Ok(new { token = token });
+}
+
+Создаем еще один класс RegisterRequestDto.cs, который будет принимать те же данные.
+
+[Рисунок 19 -- Файл RegisterRequestDto.cs]
+namespace YourProject.Models.DTO
+{
+    public class RegisterRequestDto
+    {
+        public string Email { get; set; }
+        public string Password { get; set; }
+        public string FullName { get; set; }
+    }
+}
+
+Возвращаемся в AuthController.cs и меняем код метода Register.
+
+[Рисунок 20 -- Метод Register]
+[HttpPost("register")]
+public async Task<IActionResult> Register([FromBody] RegisterRequestDto request)
+{
+    var existingUser = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+    if (existingUser != null)
+        return BadRequest("Пользователь с таким email уже существует");
+
+    var user = new User
+    {
+        Email = request.Email,
+        PasswordHash = HashPassword(request.Password),
+        FullName = request.FullName
+    };
+    _context.Users.Add(user);
+    await _context.SaveChangesAsync();
+    return Ok();
+}
+
+Добавим валидацию, для того, чтобы сделать невозможной регистрацию нескольких пользователей по одной почте.
+
+[Рисунок 21 -- Запрет на регистрацию пользователя по уже добавленной почте]
+(Код уже показан на рисунке 20: проверка existingUser и возврат BadRequest)
+
+В методе POST /register протестируем работу валидации.
+
+[Рисунок 22 -- Проверка работоспособности приложения]
+Отправлен запрос POST /register с email, который уже существует в базе.
+Получен ответ: 400 Bad Request с сообщением "Пользователь с таким email уже существует".

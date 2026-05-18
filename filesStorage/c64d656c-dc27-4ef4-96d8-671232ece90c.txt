@@ -1,0 +1,262 @@
+Тема №6. Ролевая модель. Работа с файлами.
+
+Добавим в приложение разграничение по ролям. Для начала добавим пользователей в базу данных.
+
+[Рисунок 1 -- Добавление пользователей]
+Пример SQL-запроса или данных через Seeder:
+INSERT INTO Users (Email, PasswordHash, FullName, Role) VALUES 
+('admin@example.com', 'hashed_password', 'Admin User', 'admin'),
+('manager@example.com', 'hashed_password', 'Manager User', 'manager'),
+('user@example.com', 'hashed_password', 'Regular User', 'user');
+
+В файле DepartmentsController.cs перед методом GetDepartments пропишем, что данный метод будет доступен только пользователям с ролями admin и manager.
+
+[Рисунок 2 -- Добавление ограничений]
+[Authorize(Roles = "admin,manager")]
+[HttpGet]
+public async Task<IActionResult> GetDepartments()
+{
+    // код метода
+}
+
+Приложение использует JWT для проверки аутентификации пользователя следующим образом:
+
+Сперва пользователь заходит на сервер аутентификации с помощью аутентификационного ключа (пара логин/пароль).
+
+Затем сервер аутентификации создает JWT и отправляет его пользователю.
+
+Когда пользователь делает запрос к API приложения, он добавляет к нему полученный ранее JWT.
+
+Когда пользователь делает API запрос, приложение может проверить по переданному с запросом JWT является ли пользователь тем, за кого себя выдает. В этой схеме сервер приложения сконфигурирован так, что сможет проверить, является ли входящий JWT именно тем, что был создан сервером аутентификации.
+
+В файле Program.cs опишем метод AddSecurityDefinition, который отвечает за настройку с описанием механизма авторизации -- получение токена. AddSecurityRequirement отвечает за настройки политики безопасности.
+
+[Рисунок 3 -- Добавление настроек авторизации]
+builder.Services.AddSwaggerGen(c => {
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme.",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer"
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            new List<string>()
+        }
+    });
+});
+
+В методе POST/login введем данные первого пользователя и получим токен. Откроем созданное нами окно, пропишем команду bearer и вставим токен.
+
+[Рисунок 4 -- Авторизация]
+В Swagger UI нажата кнопка "Authorize", в поле введено: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+Выполним запрос к отделам и убедимся в том, что у нас есть необходимые права.
+
+[Рисунок 5 -- Успешная авторизация с ролью manager]
+Отправлен GET-запрос /api/departments. Ответ: 200 OK со списком отделов.
+
+После проверки работоспособности, опишем разделение по ролям для каждого метода. Укажем, что доступ к методам получают только авторизированные пользователи, метод GetDepartments доступен админу и менеджеру, а методы добавления, изменения и удаления -- только админу.
+
+[Рисунок 6 -- Доступ к методам админу и менеджеру]
+[Authorize(Roles = "admin,manager")]
+[HttpGet("departments")]
+public async Task<IActionResult> GetDepartments() { ... }
+
+[Authorize(Roles = "admin,manager")]
+[HttpGet("departments/{id}")]
+public async Task<IActionResult> GetDepartmentById(int id) { ... }
+
+[Рисунок 7 -- Методы, доступные только администратору]
+[Authorize(Roles = "admin")]
+[HttpPost("departments")]
+public async Task<IActionResult> CreateDepartment([FromBody] DepartmentDto dto) { ... }
+
+[Authorize(Roles = "admin")]
+[HttpPut("departments/{id}")]
+public async Task<IActionResult> UpdateDepartment(int id, [FromBody] DepartmentDto dto) { ... }
+
+[Authorize(Roles = "admin")]
+[HttpDelete("departments/{id}")]
+public async Task<IActionResult> DeleteDepartment(int id) { ... }
+
+Перейдем в файл EmployeesControllers и укажем роли в нем. Для всех методов укажем доступ администратору и менеджеру.
+
+[Рисунок 8 -- Доступ администратору и менеджеру]
+[Authorize(Roles = "admin,manager")]
+[ApiController]
+[Route("api/[controller]")]
+public class EmployeesController : ControllerBase
+{
+    [HttpGet]
+    public async Task<IActionResult> GetEmployees() { ... }
+
+    [HttpGet("{id}")]
+    public async Task<IActionResult> GetEmployeeById(int id) { ... }
+
+    [Authorize(Roles = "admin")] // только админ может создавать/изменять/удалять
+    [HttpPost]
+    public async Task<IActionResult> CreateEmployee([FromBody] EmployeeRequestDto dto) { ... }
+
+    [Authorize(Roles = "admin")]
+    [HttpPut("{id}")]
+    public async Task<IActionResult> UpdateEmployee(int id, [FromBody] EmployeeRequestDto dto) { ... }
+
+    [Authorize(Roles = "admin")]
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteEmployee(int id) { ... }
+}
+
+Создадим новый контроллер, который будет отвечать за загрузку файлов. Для начала в папке DTO создадим новый файл класса FileRequestDto.cs.
+
+[Рисунок 9 -- Создание файла класса]
+namespace YourProject.Models.DTO
+{
+    public class FileRequestDto
+    {
+        public string FileName { get; set; }
+        public string Base64Content { get; set; }
+    }
+}
+
+Далее, добавим в папку Controllers файл FilesController.cs (Контроллер API).
+
+[Рисунок 10 -- Добавление контроллера]
+Создан пустой класс FilesController, унаследованный от ControllerBase.
+
+Пропишем создание новой папки, в которую будут сохраняться файлы. Path.Combine -- метод, который предназначен для объединения отдельных строк в одну строку, представляющую путь к файлу. Однако если аргумент, отличный от первого, содержит корневой путь, все предыдущие компоненты пути игнорируются, а возвращаемая строка начинается с этого компонента корневого пути. Directory.GetCurrentDirectory -- получает текущий рабочий каталог приложения. Мы проверяем наличие папки и если она отсутствует, то создаем ее (CreateDirectory). Далее мы конвертируем данные в нужный нам формат. File.WriteAllBytes -- создает новый файл, записывает в него указанный массив байтов и затем закрывает файл. Если целевой файл уже существует, он усекается и перезаписывается. Код файла FilesController.cs представлен на рисунке 11.
+
+[Рисунок 11 -- Файл FilesController.cs]
+[ApiController]
+[Route("api/[controller]")]
+public class FilesController : ControllerBase
+{
+    private readonly IWebHostEnvironment _env;
+    public FilesController(IWebHostEnvironment env)
+    {
+        _env = env;
+    }
+
+    [HttpPost("upload")]
+    public async Task<IActionResult> UploadFile([FromBody] FileRequestDto request)
+    {
+        string uploadsFolder = Path.Combine(_env.ContentRootPath, "filesStorage");
+        if (!Directory.Exists(uploadsFolder))
+        {
+            Directory.CreateDirectory(uploadsFolder);
+        }
+        byte[] fileBytes = Convert.FromBase64String(request.Base64Content);
+        string filePath = Path.Combine(uploadsFolder, request.FileName);
+        await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+        return Ok(new { message = "Файл успешно загружен", path = filePath });
+    }
+}
+
+Протестируем работу приложения. На рабочем столе создадим текстовый файл и заполним его произвольными данными.
+
+[Рисунок 12 -- Текстовый файл на рабочем столе]
+Файл test.txt содержит текст: "Это тестовый файл для загрузки"
+
+С помощью сайтов в интернете, сконвертируем содержимое нашего файла в формат Base64.
+
+[Рисунок 13 -- Конвертирование файла]
+На сайте-конвертере получена строка: "0K3RgtC+INGC0LXRgdGC0L7QstGL0Lkg0YTQsNC50Lsg0LTQu9GPINC30LDQs9GA0YPQt9C60Lg="
+
+Копируем строку Base64 и переходим в раздел POST/files/upload.
+
+[Рисунок 14 -- Работа с приложением]
+В Swagger отправлен POST-запрос /api/files/upload с JSON-телом:
+{
+    "fileName": "test.txt",
+    "base64Content": "0K3RgtC+INGC0LXRgdGC0L7QstGL0Lkg0YTQsNC50Lsg0LTQu9GPINC30LDQs9GA0YPQt9C60Lg="
+}
+Ответ: 200 OK.
+
+Файл успешно создан в нужной папке.
+
+[Рисунок 15 -- Наш файл в нужной папке]
+В папке filesStorage внутри проекта появился файл test.txt.
+
+Укажем ограничения по ролям для нашего метода. Теперь создадим обратный метод, когда мы будем передавать приложению готовый файл. File.ReadAllBytes -- открывает двоичный файл, считывает содержимое файла в массив байтов и затем закрывает файл. Application/Octet-Stream -- используется для обозначения того, что тело содержит бинарные данные.
+
+[Рисунок 16 -- Метод DownloadFile]
+[HttpGet("download")]
+public async Task<IActionResult> DownloadFile(string fileName)
+{
+    string filePath = Path.Combine(_env.ContentRootPath, "filesStorage", fileName);
+    if (!System.IO.File.Exists(filePath))
+    {
+        return NotFound("Файл не найден");
+    }
+    byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(filePath);
+    return File(fileBytes, "application/octet-stream", fileName);
+}
+
+Протестируем работу приложения. В папке filesStorage из прошлого метода создадим файл 001.txt и обратимся к нему в разделе GET/files/download. Как мы видим, метод выполняется, приложение предлагает нам скачать наш файл.
+
+[Рисунок 17 -- Тестирование приложения]
+Отправлен GET-запрос /api/files/download?fileName=001.txt. Браузер предложил сохранить файл.
+
+Укажем, что оба метода доступны только после авторизации, добавим ограничение по ролям для метода DownloadFile и обернем его в try-catch.
+
+[Рисунок 18 -- Добавление ролей]
+[Authorize]
+[HttpPost("upload")]
+public async Task<IActionResult> UploadFile([FromBody] FileRequestDto request)
+{
+    // код с проверкой авторизации
+}
+
+[Authorize(Roles = "admin,manager")]
+[HttpGet("download")]
+public async Task<IActionResult> DownloadFile(string fileName)
+{
+    try
+    {
+        string filePath = Path.Combine(_env.ContentRootPath, "filesStorage", fileName);
+        if (!System.IO.File.Exists(filePath))
+        {
+            return NotFound("Файл не найден");
+        }
+        byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(filePath);
+        return File(fileBytes, "application/octet-stream", fileName);
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, $"Внутренняя ошибка сервера: {ex.Message}");
+    }
+}
+
+Добавим метод DeleteFile для удаления файлов из папки.
+
+[Рисунок 19 -- Метод DeleteFile]
+[Authorize(Roles = "admin")]
+[HttpDelete("delete")]
+public async Task<IActionResult> DeleteFile(string fileName)
+{
+    try
+    {
+        string filePath = Path.Combine(_env.ContentRootPath, "filesStorage", fileName);
+        if (!System.IO.File.Exists(filePath))
+        {
+            return NotFound("Файл не найден");
+        }
+        System.IO.File.Delete(filePath);
+        return Ok(new { message = "Файл успешно удален" });
+    }
+    catch (Exception ex)
+    {
+        return StatusCode(500, $"Ошибка при удалении: {ex.Message}");
+    }
+}
